@@ -21,7 +21,7 @@ const Download = () => {
   const [pinVerified, setPinVerified] = useState(false);
   const [pinError, setPinError] = useState('');
   const [verifyingPin, setVerifyingPin] = useState(false);
-  const [wakingServer, setWakingServer] = useState(false);
+
 
   // Fetch file metadata
   useEffect(() => {
@@ -80,39 +80,7 @@ const Download = () => {
     }
   };
 
-  // Wake up server with polling
-  const handleWakeServer = async () => {
-    setWakingServer(true);
-    const loadingToast = toast.loading('Waking up server... This may take 30-60 seconds');
-    
-    try {
-      let attempts = 0;
-      const maxAttempts = 20; // 20 attempts * 3 seconds = 60 seconds max
-      
-      while (attempts < maxAttempts) {
-        try {
-          await fileService.getFileMetadata(uuid!);
-          // If successful, server is awake
-          toast.dismiss(loadingToast);
-          toast.success('Server is ready! You can now download the file.');
-          setWakingServer(false);
-          return;
-        } catch (err: any) {
-          attempts++;
-          if (attempts >= maxAttempts) {
-            throw new Error('Server failed to wake up after 60 seconds');
-          }
-          // Wait 3 seconds before next attempt
-          await new Promise(resolve => setTimeout(resolve, 3000));
-        }
-      }
-    } catch (err) {
-      toast.dismiss(loadingToast);
-      toast.error('Failed to wake server. Please try again or contact support.');
-    } finally {
-      setWakingServer(false);
-    }
-  };
+
 
   // Handle download
   const handleDownload = async () => {
