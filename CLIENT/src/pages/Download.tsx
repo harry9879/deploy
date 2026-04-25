@@ -114,7 +114,7 @@ const Download = () => {
     }
   };
 
-  // Handle download with server wake-up and retry logic
+  // Handle download
   const handleDownload = async () => {
     if (!fileData) return;
 
@@ -129,51 +129,34 @@ const Download = () => {
       return;
     }
 
-    const loadingToast = toast.loading('Preparing download... Server may need up to 60 seconds to wake up');
+    const loadingToast = toast.loading('Preparing download...');
 
     try {
-      // Step 1: Wake the server by polling the metadata endpoint
-      let serverReady = false;
-      let attempts = 0;
-      const maxAttempts = 20;
+      // Call the download endpoint — for S3 files it returns JSON with a presigned URL
+      const apiBase = import.meta.env.VITE_API_URL || 'http://localhost:5001/api';
+      const endpointUrl = `${apiBase}/files/${uuid}/download`;
 
-      while (attempts < maxAttempts && !serverReady) {
-        try {
-          await fileService.getFileMetadata(uuid!);
-          serverReady = true;
-        } catch (err) {
-          attempts++;
-          if (attempts < maxAttempts) {
-            await new Promise(resolve => setTimeout(resolve, 3000));
-          }
-        }
-      }
+      const response = await fetch(endpointUrl, { credentials: 'include' });
+      const contentType = response.headers.get('Content-Type') || '';
 
-      if (!serverReady) {
-        throw new Error('Server failed to respond');
+      if (!response.ok) {
+        const errData = await response.json().catch(() => ({}));
+        throw new Error(errData.message || `Download failed: ${response.statusText}`);
       }
 
       toast.dismiss(loadingToast);
-      const downloadingToast = toast.loading('Starting download...');
 
-      // Step 2: Fetch the file with timeout
-      const downloadUrl = fileService.downloadFile(uuid!);
-      
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 30000); // 30 second timeout for actual download
-
-      const response = await fetch(downloadUrl, {
-        signal: controller.signal,
-        credentials: 'include'
-      });
-
-      clearTimeout(timeoutId);
-
-      if (!response.ok) {
-        throw new Error(`Download failed: ${response.statusText}`);
+      // S3 file: server returns { downloadUrl } — navigate directly
+      if (contentType.includes('application/json')) {
+        const data = await response.json();
+        if (data.downloadUrl) {
+          window.location.href = data.downloadUrl;
+          toast.success('Download started!');
+          return;
+        }
       }
 
-      // Step 3: Download the file
+      // Local file: server streams the file
       const blob = await response.blob();
       const url = window.URL.createObjectURL(blob);
       const link = document.createElement('a');
@@ -183,18 +166,11 @@ const Download = () => {
       link.click();
       document.body.removeChild(link);
       window.URL.revokeObjectURL(url);
-
-      toast.dismiss(downloadingToast);
-      toast.success('Download completed successfully!');
+      toast.success('Download completed!');
     } catch (error: any) {
       toast.dismiss(loadingToast);
       console.error('Download error:', error);
-      
-      if (error.name === 'AbortError') {
-        toast.error('Download timed out. Please try clicking "Wake Up Server" first, then try downloading again.');
-      } else {
-        toast.error('Download failed. Please try clicking "Wake Up Server" first, then try again.');
-      }
+      toast.error(error.message || 'Download failed. Please try again.');
     }
   };
 
@@ -373,16 +349,6 @@ const Download = () => {
 
           {/* Action Buttons */}
           <div className="space-y-3">
-            {/* Wake Server Button */}
-            <button
-              onClick={handleWakeServer}
-              disabled={wakingServer}
-              className="w-full py-3 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors font-medium flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              <FiClock className="w-5 h-5" />
-              {wakingServer ? 'Waking Server...' : 'Wake Up Server (Recommended First)'}
-            </button>
-
             {/* Download Button */}
             <button
               onClick={handleDownload}
@@ -391,13 +357,6 @@ const Download = () => {
               <FiDownload className="w-6 h-6" />
               Download {fileData.isZipped ? 'ZIP Archive' : 'File'}
             </button>
-          </div>
-
-          {/* Server Info */}
-          <div className="mt-4 p-4 bg-gradient-to-r from-[#7ADAA5]/10 to-[#98D8C8]/10 border-2 border-[#7ADAA5]/30 rounded-lg">
-            <p className="text-sm text-gray-800">
-              <strong>💡 Tip:</strong> Click "Wake Up Server" first if the download takes too long. Our server sleeps after 15 minutes of inactivity and needs 30-60 seconds to wake up.
-            </p>
           </div>
 
           {/* Warning */}

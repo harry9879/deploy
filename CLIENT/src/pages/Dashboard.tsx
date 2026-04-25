@@ -20,7 +20,7 @@ import {
 import type { File, Analytics } from '../types';
 
 const Dashboard = () => {
-  const { user } = useAuth();
+  const { user, updateUser } = useAuth();
   const [files, setFiles] = useState<File[]>([]);
   const [analytics, setAnalytics] = useState<Analytics | null>(null);
   const [loading, setLoading] = useState(true);
@@ -32,6 +32,16 @@ const Dashboard = () => {
   useEffect(() => {
     loadDashboard();
   }, []);
+
+  // Refresh user data when window gains focus (e.g. returning from email verification tab)
+  useEffect(() => {
+    const handleFocus = () => {
+      updateUser();
+    };
+    
+    window.addEventListener('focus', handleFocus);
+    return () => window.removeEventListener('focus', handleFocus);
+  }, [updateUser]);
 
   const loadDashboard = async () => {
     try {
@@ -116,7 +126,12 @@ const Dashboard = () => {
       toast.success('Verification email sent! Check your inbox.');
     } catch (error: any) {
       console.error('Error resending verification:', error);
-      toast.error(error.response?.data?.message || 'Failed to send verification email');
+      toast.error(
+        error.response?.data?.error ||
+        error.response?.data?.message ||
+        error.message ||
+        'Failed to send verification email'
+      );
     } finally {
       setResendingEmail(false);
     }

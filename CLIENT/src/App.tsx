@@ -15,7 +15,7 @@ const ProtectedRoute = ({ children }: { children: React.ReactNode }) => {
 
   if (loading) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-[#F0FFF4] via-[#FEFCF8] to-[#F7FEF9]">
+      <div className="min-h-screen flex items-center justify-center  from-[#F0FFF4] via-[#FEFCF8] to-[#F7FEF9]">
         <div className="text-center">
           <Loader />
           <p className="mt-4 text-gray-600">Loading...</p>

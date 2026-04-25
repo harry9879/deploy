@@ -8,8 +8,6 @@ const Register: React.FC = () => {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
-  const [adminCode, setAdminCode] = useState('');
-  const [showAdminCode, setShowAdminCode] = useState(false);
   const [loading, setLoading] = useState(false);
   const { register, user } = useAuth();
   const navigate = useNavigate();
@@ -43,7 +41,7 @@ const Register: React.FC = () => {
     setLoading(true);
 
     try {
-      await register(name, email, password, adminCode || undefined);
+      await register(name, email, password);
       toast.success('Please check your email to verify your account');
       navigate('/dashboard');
     } catch (error) {
@@ -130,39 +128,6 @@ const Register: React.FC = () => {
                 disabled={loading}
               />
             </div>
-
-            {/* Admin Code Toggle */}
-            <div>
-              <button
-                type="button"
-                onClick={() => setShowAdminCode(!showAdminCode)}
-                className="text-sm text-[#7ADAA5] hover:text-[#98D8C8] font-medium"
-              >
-                {showAdminCode ? '− ' : '+ '}
-                Register as Admin
-              </button>
-            </div>
-
-            {/* Admin Code Input */}
-            {showAdminCode && (
-              <div>
-                <label htmlFor="adminCode" className="block text-sm font-medium text-gray-700 mb-2">
-                  Admin Registration Code
-                </label>
-                <input
-                  id="adminCode"
-                  type="text"
-                  value={adminCode}
-                  onChange={(e) => setAdminCode(e.target.value)}
-                  className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#7ADAA5] focus:border-transparent transition"
-                  placeholder="Enter admin code"
-                  disabled={loading}
-                />
-                <p className="text-xs text-gray-500 mt-1">
-                  Only enter if you have been provided an admin code
-                </p>
-              </div>
-            )}
 
             {/* Submit Button */}
             <button
