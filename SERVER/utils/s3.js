@@ -35,6 +35,21 @@ export const uploadFileToS3 = async (filePath, key, contentType) => {
   return key;
 };
 
+export const uploadBufferToS3 = async (buffer, key, contentType) => {
+  const client = initS3Client();
+  if (!client) throw new Error('S3 Client not initialized. Check Tigris credentials.');
+  
+  const command = new PutObjectCommand({
+    Bucket: process.env.TIGRIS_BUCKET,
+    Key: key,
+    Body: buffer,
+    ContentType: contentType,
+  });
+
+  await client.send(command);
+  return key;
+};
+
 export const getDownloadUrl = async (key, expiresIn = 3600) => {
   const client = initS3Client();
   if (!client) throw new Error('S3 Client not initialized.');
@@ -82,6 +97,7 @@ export const getFileStreamFromS3 = async (key, range) => {
 export default {
   initS3Client,
   uploadFileToS3,
+  uploadBufferToS3,
   getDownloadUrl,
   deleteFileFromS3,
   getFileStreamFromS3,

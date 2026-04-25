@@ -4,7 +4,6 @@ import cors from 'cors';
 import helmet from 'helmet';
 import morgan from 'morgan';
 import connectDB from './config/db.js';
-import { startCleanupJob } from './utils/cleanup.js';
 
 // Import routes
 import authRoutes from './routes/auth.js';
@@ -21,16 +20,26 @@ const app = express();
 // Connect to MongoDB
 connectDB();
 
-// Start cleanup cron job
-startCleanupJob();
-
 // Middleware
 app.use(helmet({
   crossOriginResourcePolicy: { policy: "cross-origin" },
 }));
 
+// Allow multiple frontend origins (local dev + Vercel production)
+const allowedOrigins = [
+  process.env.FRONTEND_URL,
+  'http://localhost:5173',
+].filter(Boolean);
+
 app.use(cors({
-  origin: process.env.FRONTEND_URL || 'http://localhost:5173',
+  origin: function (origin, callback) {
+    // Allow requests with no origin (mobile apps, curl, etc.)
+    if (!origin) return callback(null, true);
+    if (allowedOrigins.some(allowed => origin.startsWith(allowed))) {
+      return callback(null, true);
+    }
+    callback(new Error('Not allowed by CORS'));
+  },
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization'],
@@ -113,11 +122,11 @@ app.use((err, req, res, next) => {
   });
 });
 
-// Start server
-const PORT = process.env.PORT || 5000;
-
-app.listen(PORT, () => {
-  console.log(`
+// Only start listening when NOT running on Vercel (Vercel handles this itself)
+if (!process.env.VERCEL) {
+  const PORT = process.env.PORT || 5000;
+  app.listen(PORT, () => {
+    console.log(`
 ╔═══════════════════════════════════════════════════════╗
 ║                                                       ║
 ║   🚀 File Sharing App Server                         ║
@@ -127,7 +136,8 @@ app.listen(PORT, () => {
 ║   📂 MongoDB: ${process.env.MONGODB_URI ? '✅ Connected' : '❌ Not configured'}              ║
 ║                                                       ║
 ╚═══════════════════════════════════════════════════════╝
-  `);
-});
+    `);
+  });
+}
 
 export default app;

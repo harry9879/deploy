@@ -8,16 +8,12 @@ import fsPromises from 'fs/promises';
 import bcrypt from 'bcrypt';
 import { fileURLToPath } from 'url';
 import { 
-  createZipFromFiles, 
-  deleteFile, 
+  createZipFromBuffers, 
   calculateExpiryTime,
   getMimeCategory 
 } from '../utils/fileHelper.js';
 import { sendFileShareEmail, validateEmails } from '../utils/email.js';
-import { uploadFileToS3, getDownloadUrl, getFileStreamFromS3 } from '../utils/s3.js';
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+import { uploadBufferToS3, getDownloadUrl, getFileStreamFromS3 } from '../utils/s3.js';
 
 export const uploadFiles = async (req, res) => {
   try {
@@ -111,47 +107,36 @@ export const uploadFiles = async (req, res) => {
 
     const fileUuid = uuidv4();
     const userId = req.user._id.toString();
-    const fileDir = path.join(__dirname, '../uploads', userId, fileUuid);
-
-    await fsPromises.mkdir(fileDir, { recursive: true });
-
-    let storedPath;
-    let finalSize;
-    let isZipped = false;
     const originalFilenames = files.map(f => f.originalname);
     const contentTypes = files.map(f => f.mimetype);
 
+    let uploadBuffer;
+    let finalSize;
+    let isZipped = false;
+
     if (files.length > 1) {
-      const zipPath = path.join(fileDir, `files_${fileUuid}.zip`);
-      const zipResult = await createZipFromFiles(files, zipPath);
-      
-      storedPath = zipResult.path;
+      // Zip multiple files from memory buffers
+      const zipResult = await createZipFromBuffers(files);
+      uploadBuffer = zipResult.buffer;
       finalSize = zipResult.size;
       isZipped = true;
-
-      for (const file of files) {
-        await deleteFile(file.path);
-      }
     } else {
-      const singleFile = files[0];
-      storedPath = path.join(fileDir, singleFile.originalname);
-      await fsPromises.rename(singleFile.path, storedPath);
-      finalSize = singleFile.size;
+      // Single file — use its buffer directly
+      uploadBuffer = files[0].buffer;
+      finalSize = files[0].size;
     }
 
-    let finalStoredPath = storedPath;
-    let isS3 = false;
-
-    // Check if S3 is configured
-    if (process.env.AWS_ACCESS_KEY_ID && process.env.TIGRIS_BUCKET) {
-      const s3Key = `${userId}/${fileUuid}/${isZipped ? `files_${fileUuid}.zip` : files[0].originalname}`;
-      await uploadFileToS3(storedPath, s3Key, isZipped ? 'application/zip' : files[0].mimetype);
-      finalStoredPath = `s3://${s3Key}`;
-      isS3 = true;
-      
-      // Delete local file after S3 upload
-      await fsPromises.unlink(storedPath);
+    // Upload directly to S3 from memory buffer
+    if (!process.env.AWS_ACCESS_KEY_ID || !process.env.TIGRIS_BUCKET) {
+      return res.status(500).json({
+        success: false,
+        message: 'S3 storage is not configured. Cannot upload files.',
+      });
     }
+
+    const s3Key = `${userId}/${fileUuid}/${isZipped ? `files_${fileUuid}.zip` : files[0].originalname}`;
+    await uploadBufferToS3(uploadBuffer, s3Key, isZipped ? 'application/zip' : files[0].mimetype);
+    const finalStoredPath = `s3://${s3Key}`;
 
     const fileRecord = await File.create({
       uuid: fileUuid,
@@ -361,22 +346,8 @@ export const downloadFile = async (req, res) => {
       });
     }
 
-    const isS3 = file.storedPath.startsWith('s3://');
-
-    // Check if file exists (locally or we assume it exists in S3)
-    if (!isS3) {
-      try {
-        await fsPromises.access(file.storedPath);
-      } catch {
-        return res.status(404).json({
-          success: false,
-          message: 'File not found on server',
-        });
-      }
-    }
-
     // Get client IP and user agent
-    const clientIp = req.headers['x-forwarded-for'] || req.connection.remoteAddress;
+    const clientIp = req.headers['x-forwarded-for'] || req.connection?.remoteAddress;
     const userAgent = req.headers['user-agent'];
 
     // Log the download
@@ -398,41 +369,10 @@ export const downloadFile = async (req, res) => {
       ? `files_${uuid}.zip` 
       : file.originalFilenames[0];
 
-    if (isS3) {
-      const s3Key = file.storedPath.replace('s3://', '');
-      const downloadUrl = await getDownloadUrl(s3Key, 3600); // 1 hour valid
-      // Return presigned URL as JSON — client must use window.location.href
-      // (fetch + credentials:include + redirect breaks on S3 CORS)
-      return res.json({ success: true, downloadUrl, filename });
-    }
-
-    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
-    res.setHeader('Content-Type', file.isZipped ? 'application/zip' : file.contentTypes[0]);
-    
-    // Support range requests for resume capability
-    const stat = await fsPromises.stat(file.storedPath);
-    const fileSize = stat.size;
-    const range = req.headers.range;
-
-    if (range) {
-      const parts = range.replace(/bytes=/, "").split("-");
-      const start = parseInt(parts[0], 10);
-      const end = parts[1] ? parseInt(parts[1], 10) : fileSize - 1;
-      const chunksize = (end - start) + 1;
-
-      res.writeHead(206, {
-        'Content-Range': `bytes ${start}-${end}/${fileSize}`,
-        'Accept-Ranges': 'bytes',
-        'Content-Length': chunksize,
-      });
-
-      const readStream = fs.createReadStream(file.storedPath, { start, end });
-      readStream.pipe(res);
-    } else {
-      res.setHeader('Content-Length', fileSize);
-      const readStream = fs.createReadStream(file.storedPath);
-      readStream.pipe(res);
-    }
+    // All files are on S3 in Vercel deployment
+    const s3Key = file.storedPath.replace('s3://', '');
+    const downloadUrl = await getDownloadUrl(s3Key, 3600); // 1 hour valid
+    return res.json({ success: true, downloadUrl, filename });
   } catch (error) {
     console.error('Download error:', error);
     res.status(500).json({
@@ -472,22 +412,8 @@ export const streamFile = async (req, res) => {
       });
     }
 
-    const isS3 = file.storedPath.startsWith('s3://');
-
-    // Check if file exists on disk
-    if (!isS3) {
-      try {
-        await fsPromises.access(file.storedPath);
-      } catch {
-        return res.status(404).json({
-          success: false,
-          message: 'File not found on server',
-        });
-      }
-    }
-
     // Get client IP and user agent
-    const clientIp = req.headers['x-forwarded-for'] || req.connection.remoteAddress;
+    const clientIp = req.headers['x-forwarded-for'] || req.connection?.remoteAddress;
     const userAgent = req.headers['user-agent'];
 
     // Log the stream
@@ -501,39 +427,10 @@ export const streamFile = async (req, res) => {
       action: 'stream',
     });
 
-    const range = req.headers.range;
-
-    if (isS3) {
-      const s3Key = file.storedPath.replace('s3://', '');
-      // For stream (preview), redirect to presigned URL — works fine for <img>/<iframe>
-      const streamUrl = await getDownloadUrl(s3Key, 3600);
-      return res.redirect(streamUrl);
-    }
-
-    const stat = await fsPromises.stat(file.storedPath);
-    const fileSize = stat.size;
-
-    res.setHeader('Content-Type', file.contentTypes[0]);
-    res.setHeader('Accept-Ranges', 'bytes');
-
-    if (range) {
-      const parts = range.replace(/bytes=/, "").split("-");
-      const start = parseInt(parts[0], 10);
-      const end = parts[1] ? parseInt(parts[1], 10) : fileSize - 1;
-      const chunksize = (end - start) + 1;
-
-      res.writeHead(206, {
-        'Content-Range': `bytes ${start}-${end}/${fileSize}`,
-        'Content-Length': chunksize,
-      });
-
-      const readStream = fs.createReadStream(file.storedPath, { start, end });
-      readStream.pipe(res);
-    } else {
-      res.setHeader('Content-Length', fileSize);
-      const readStream = fs.createReadStream(file.storedPath);
-      readStream.pipe(res);
-    }
+    // All files are on S3 — redirect to presigned URL
+    const s3Key = file.storedPath.replace('s3://', '');
+    const streamUrl = await getDownloadUrl(s3Key, 3600);
+    return res.redirect(streamUrl);
   } catch (error) {
     console.error('Stream error:', error);
     res.status(500).json({

@@ -32,6 +32,38 @@ export const createZipFromFiles = (files, outputPath) => {
   });
 };
 
+// Create zip from in-memory buffers (for serverless/Vercel)
+export const createZipFromBuffers = (files) => {
+  return new Promise((resolve, reject) => {
+    const chunks = [];
+    const archive = archiver('zip', {
+      zlib: { level: 9 }
+    });
+
+    archive.on('data', (chunk) => {
+      chunks.push(chunk);
+    });
+
+    archive.on('end', () => {
+      const buffer = Buffer.concat(chunks);
+      resolve({
+        buffer,
+        size: buffer.length,
+      });
+    });
+
+    archive.on('error', (err) => {
+      reject(err);
+    });
+
+    files.forEach(file => {
+      archive.append(file.buffer, { name: file.originalname });
+    });
+
+    archive.finalize();
+  });
+};
+
 export const deleteFile = async (filePath) => {
   try {
     await fsPromises.unlink(filePath);
@@ -120,6 +152,7 @@ export const generateUniqueFilename = (originalName) => {
 
 export default {
   createZipFromFiles,
+  createZipFromBuffers,
   deleteFile,
   deleteDirectory,
   ensureDirectoryExists,
